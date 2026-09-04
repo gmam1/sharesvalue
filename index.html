@@ -68,6 +68,39 @@
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
+    
+    /* NEW: Info Overlay Boxes */
+    .info-overlay {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      display: flex;
+      gap: 12px;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .info-box {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid #e0e0e0;
+      padding: 8px 14px;
+      border-radius: 6px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+      backdrop-filter: blur(4px);
+    }
+    .info-box .title {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #666;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .info-box .value {
+      font-size: 16px;
+      font-weight: bold;
+      color: #131722;
+      margin-top: 2px;
+    }
+
     .company-logo {
       position: absolute;
       left: 12px;
@@ -92,18 +125,36 @@
   <div id="status">Loading data from Google Sheet...</div>
 
   <div id="chart-wrapper">
+    <!-- NEW: Info Boxes Layer -->
+    <div class="info-overlay">
+      <div class="info-box">
+        <div class="title">Total Shares</div>
+        <div class="value" id="totalSharesVal">Loading...</div>
+      </div>
+      <div class="info-box">
+        <div class="title">Available Shares</div>
+        <div class="value" id="availSharesVal">Loading...</div>
+      </div>
+    </div>
+
     <div id="chart-container"></div>
 
-    <!-- CORRECT LOGO LINK -->
-<img src="https://lh3.googleusercontent.com/d/1JGLDck8R6LeOBPAalKvtmMzMulO5YN_A" 
-     alt="PipProfit Partners" 
-     class="company-logo">
-      </div>
+    <img src="https://lh3.googleusercontent.com/d/1JGLDck8R6LeOBPAalKvtmMzMulO5YN_A" 
+         alt="PipProfit Partners" 
+         class="company-logo">
+  </div>
 
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 
   <script>
-    const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/14yibW5v_rfcMGRNpG4pzjTR7JnMb_bgczTgeyAH1n50/export?format=csv";
+    const SHEET_ID = "14yibW5v_rfcMGRNpG4pzjTR7JnMb_bgczTgeyAH1n50";
+    
+    // URL for Chart Data (Tab 1 / Sheet 1)
+    const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv`;
+    
+    // URL for Info Data (Tab 2 - named 'Info' or grid id 2)
+    const SHEET_INFO_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Info`;
+
     const AUTO_REFRESH_MS = 5 * 60 * 1000;
 
     let chart = null;
@@ -135,11 +186,11 @@
         const cols = lines[i].split(',');
         if (cols.length < 5) continue;
 
-        const time = cols[0].trim();
-        const open = parseFloat(cols[1]);
-        const high = parseFloat(cols[2]);
-        const low = parseFloat(cols[3]);
-        const close = parseFloat(cols[4]);
+        const time = cols[0].trim().replace(/"/g, '');
+        const open = parseFloat(cols[1].replace(/"/g, ''));
+        const high = parseFloat(cols[2].replace(/"/g, ''));
+        const low = parseFloat(cols[3].replace(/"/g, ''));
+        const close = parseFloat(cols[4].replace(/"/g, ''));
 
         if (time && !isNaN(open) && !isNaN(high) && !isNaN(low) && !isNaN(close)) {
           data.push({ time, open, high, low, close });
@@ -150,6 +201,26 @@
       return data;
     }
 
+    // Function to parse the Share Info from Tab 2
+    function parseInfoCSV(csvText) {
+      const lines = csvText.trim().split('\n');
+      let totalShares = "--";
+      let availShares = "--";
+
+      lines.forEach(line => {
+        const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
+        if (cols[0] && cols[0].toLowerCase().includes('total')) {
+          totalShares = cols[1] || totalShares;
+        }
+        if (cols[0] && cols[0].toLowerCase().includes('available')) {
+          availShares = cols[1] || availShares;
+        }
+      });
+
+      document.getElementById('totalSharesVal').textContent = totalShares;
+      document.getElementById('availSharesVal').textContent = availShares;
+    }
+
     function createSeries() {
       if (currentSeries) {
         chart.removeSeries(currentSeries);
@@ -157,6 +228,7 @@
 
       if (isCandlestick) {
         currentSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+          priceFormat: { precision: 4, minMove: 0.0001 },
           upColor: '#26a69a',
           downColor: '#ef5350',
           borderVisible: false,
@@ -166,6 +238,7 @@
         document.getElementById('switchBtn').textContent = "Switch to Line Chart";
       } else {
         currentSeries = chart.addSeries(LightweightCharts.LineSeries, {
+          priceFormat: { precision: 4, minMove: 0.0001 },
           color: '#2962FF',
           lineWidth: 2,
         });
@@ -178,11 +251,19 @@
       statusEl.textContent = isManual ? "Refreshing data..." : "Loading data from Google Sheet...";
 
       try {
-        const response = await fetch(SHEET_CSV_URL + "&_=" + new Date().getTime());
+        const timeStamp = new Date().getTime();
+        
+        // Load main price chart data
+        const response = await fetch(SHEET_CSV_URL + "&_=" + timeStamp);
         if (!response.ok) throw new Error("Failed to load sheet");
-
         const csvText = await response.text();
         currentData = parseCSV(csvText);
+
+        // Load share counts info data
+        fetch(SHEET_INFO_URL + "&_=" + timeStamp)
+          .then(res => res.text())
+          .then(infoCsv => parseInfoCSV(infoCsv))
+          .catch(err => console.log("Info tab not found or restricted."));
 
         if (currentData.length === 0) {
           statusEl.textContent = "No valid data found in the sheet.";
